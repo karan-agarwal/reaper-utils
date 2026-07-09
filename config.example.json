@@ -8,6 +8,7 @@
   "whisper_model": "C:\\Models\\whisper\\ggml-base.en.bin",
   "language": "en",
   "max_audio_chunk_seconds": 600,
+  "parallel_chunks": 1,
   "max_chars_per_item": 280,
   "min_item_duration_seconds": 1.0,
   "highlight_word": "next",

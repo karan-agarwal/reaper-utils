@@ -13,8 +13,10 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,13 @@ DEFAULT_HIGHLIGHT_WORD = "next"
 DEFAULT_HIGHLIGHT_EMOJI = "➡️"
 
 _BAR_WIDTH = 20
+_print_lock = threading.Lock()
+
+
+def _tprint(*args: object, **kwargs: object) -> None:
+    """Thread-safe print used by parallel chunk jobs."""
+    with _print_lock:
+        print(*args, **kwargs)
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -159,6 +168,7 @@ def run_whisper_cpp(
     wav_path: Path,
     out_dir: Path,
     output_stem: str = "whisper",
+    threads: int | None = None,
 ) -> Path:
     whisper_binary = Path(config["whisper_binary"])
     whisper_model = Path(config["whisper_model"])
@@ -182,6 +192,9 @@ def run_whisper_cpp(
     language = config.get("language")
     if language:
         command.extend(["-l", str(language)])
+
+    if threads is not None:
+        command.extend(["-t", str(threads)])
 
     result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, check=False)
     if result.returncode != 0:
@@ -351,6 +364,66 @@ def load_whisper_segments(path: Path, max_chars: int = 280) -> list[Segment]:
     return split_long_segments(segments, max_chars=max_chars)
 
 
+def _run_chunk_job(
+    index: int,
+    relative_start: float,
+    duration: float,
+    total_chunks: int,
+    config: dict[str, Any],
+    wav_path: Path,
+    chunk_dir: Path,
+    clip_start: float,
+    max_chars: int,
+    whisper_threads: int | None,
+) -> tuple[int, float, list[Segment], Exception | None]:
+    """Extract and transcribe a single chunk. Designed to run in a thread pool.
+
+    Returns (chunk_index, relative_start, raw_segments, error_or_None).
+    Segments are NOT yet offset into clip time — the caller applies offset_segments.
+    """
+    prepared_wav = chunk_dir / f"chunk_{index:04d}.wav"
+    whisper_stem = f"whisper_{index:04d}"
+    whisper_json = chunk_dir / f"{whisper_stem}.json"
+    t0 = time.monotonic()
+
+    try:
+        if whisper_json.exists():
+            _tprint(f"  [chunk {index:2d}/{total_chunks}] Resuming (cached)...", flush=True)
+        else:
+            _tprint(f"  [chunk {index:2d}/{total_chunks}] Extracting audio...", flush=True)
+            prepare_audio(
+                config=config,
+                wav_path=wav_path,
+                out_dir=chunk_dir,
+                clip_start=clip_start + relative_start,
+                clip_duration=duration,
+                output_path=prepared_wav,
+            )
+            _tprint(
+                f"  [chunk {index:2d}/{total_chunks}] Transcribing"
+                + (f" (-t {whisper_threads})..." if whisper_threads else "..."),
+                flush=True,
+            )
+            run_whisper_cpp(config, prepared_wav, chunk_dir, whisper_stem, threads=whisper_threads)
+            try:
+                prepared_wav.unlink()
+            except FileNotFoundError:
+                pass
+
+        segments = load_whisper_segments(whisper_json, max_chars=max_chars)
+        elapsed = time.monotonic() - t0
+        _tprint(f"  [chunk {index:2d}/{total_chunks}] Done in {_fmt_duration(elapsed)}", flush=True)
+        return index, relative_start, segments, None
+
+    except Exception as error:
+        elapsed = time.monotonic() - t0
+        _tprint(
+            f"  [chunk {index:2d}/{total_chunks}] ERROR after {_fmt_duration(elapsed)}: {error}",
+            flush=True,
+        )
+        return index, relative_start, [], error
+
+
 def transcribe_audio_chunks(
     config: dict[str, Any],
     wav_path: Path,
@@ -386,93 +459,141 @@ def transcribe_audio_chunks(
 
     job_t0 = time.monotonic()
 
-    for index, (relative_start, duration) in enumerate(ranges, start=1):
-        prepared_wav = chunk_dir / f"chunk_{index:04d}.wav"
-        whisper_stem = f"whisper_{index:04d}"
-        whisper_json = chunk_dir / f"{whisper_stem}.json"
+    parallel_chunks = max(1, int(config.get("parallel_chunks", 1)))
 
-        # Progress bar: filled portion reflects chunks completed so far.
-        filled = int(_BAR_WIDTH * (index - 1) / total_chunks)
-        bar = "#" * filled + "-" * (_BAR_WIDTH - filled)
-        chunk_label = (
-            f"\n[{bar}] Chunk {index}/{total_chunks}"
-            f"  ({_fmt_hms(relative_start)} - {_fmt_hms(relative_start + duration)})"
+    if parallel_chunks > 1:
+        # ── Parallel mode ──────────────────────────────────────────────────
+        import os
+        cpu_count = os.cpu_count() or 4
+        whisper_threads = max(1, cpu_count // parallel_chunks)
+        print(
+            f"\n  Parallel mode: {parallel_chunks} simultaneous chunk(s),"
+            f" {whisper_threads} whisper thread(s) each\n",
+            flush=True,
         )
-        print(chunk_label, flush=True)
 
-        chunk_t0 = time.monotonic()
+        futures_map = {}
+        with ThreadPoolExecutor(max_workers=parallel_chunks) as executor:
+            for index, (relative_start, duration) in enumerate(ranges, start=1):
+                future = executor.submit(
+                    _run_chunk_job,
+                    index, relative_start, duration, total_chunks,
+                    config, wav_path, chunk_dir, clip_start, max_chars,
+                    whisper_threads,
+                )
+                futures_map[future] = index
 
-        try:
-            if whisper_json.exists():
-                # Resume: a previous run already transcribed this chunk.
-                print("         Resuming: reusing cached whisper output...", flush=True)
+            job_results: list[tuple[int, float, list[Segment], Exception | None]] = []
+            for future in as_completed(futures_map):
+                job_results.append(future.result())
+
+        # Sort by chunk index so segments appear in timeline order.
+        job_results.sort(key=lambda r: r[0])
+        for index, relative_start, raw_segments, error in job_results:
+            duration = ranges[index - 1][1]
+            if error is None:
+                all_segments.extend(offset_segments(raw_segments, relative_start))
+                completed.add(index)
             else:
-                print("         [1/3] Extracting audio...", flush=True)
-                prepare_audio(
-                    config=config,
-                    wav_path=wav_path,
-                    out_dir=chunk_dir,
-                    clip_start=clip_start + relative_start,
-                    clip_duration=duration,
-                    output_path=prepared_wav,
-                )
-                print(
-                    "         [2/3] Transcribing with whisper.cpp..."
-                    "  (may take several minutes)",
-                    flush=True,
-                )
-                run_whisper_cpp(config, prepared_wav, chunk_dir, whisper_stem)
-                try:
-                    prepared_wav.unlink()
-                except FileNotFoundError:
-                    pass
+                warn(f"chunk {index} failed: {error}")
+                error_end = min(relative_start + duration, relative_start + 5.0)
+                if error_end > relative_start:
+                    error_segment = Segment(
+                        start=relative_start,
+                        end=error_end,
+                        speaker="speaker_1",
+                        text=f"[Chunk {index} transcription error: {error}]",
+                    )
+                    try:
+                        error_segment.validate()
+                        all_segments.append(error_segment)
+                    except ValueError:
+                        pass
 
-            print("         [3/3] Loading transcript segments...", flush=True)
-            chunk_segments = load_whisper_segments(whisper_json, max_chars=max_chars)
-            all_segments.extend(offset_segments(chunk_segments, relative_start))
-            completed.add(index)
+    else:
+        # ── Sequential mode ────────────────────────────────────────────────
+        for index, (relative_start, duration) in enumerate(ranges, start=1):
+            prepared_wav = chunk_dir / f"chunk_{index:04d}.wav"
+            whisper_stem = f"whisper_{index:04d}"
+            whisper_json = chunk_dir / f"{whisper_stem}.json"
 
-            chunk_elapsed = time.monotonic() - chunk_t0
-            job_elapsed = time.monotonic() - job_t0
-            n_done = len(completed)
-            if n_done < total_chunks:
-                avg = job_elapsed / n_done
-                eta = avg * (total_chunks - n_done)
-                print(
-                    f"         Done in {_fmt_duration(chunk_elapsed)}"
-                    f"  |  ETA: ~{_fmt_duration(eta)} for {total_chunks - n_done} more chunk(s)",
-                    flush=True,
-                )
-            else:
-                print(f"         Done in {_fmt_duration(chunk_elapsed)}", flush=True)
-
-        except Exception as error:
-            chunk_elapsed = time.monotonic() - chunk_t0
-            warn(f"chunk {index} failed: {error}")
+            # Progress bar: filled portion reflects chunks completed so far.
+            filled = int(_BAR_WIDTH * (index - 1) / total_chunks)
+            bar = "#" * filled + "-" * (_BAR_WIDTH - filled)
             print(
-                f"         ERROR after {_fmt_duration(chunk_elapsed)}: {error}",
+                f"\n[{bar}] Chunk {index}/{total_chunks}"
+                f"  ({_fmt_hms(relative_start)} - {_fmt_hms(relative_start + duration)})",
                 flush=True,
             )
-            # Insert a visible error marker in the transcript so the user can
-            # spot the gap and re-run just that portion manually if needed.
-            error_end = min(relative_start + duration, relative_start + 5.0)
-            if error_end > relative_start:
-                error_segment = Segment(
-                    start=relative_start,
-                    end=error_end,
-                    speaker="speaker_1",
-                    text=f"[Chunk {index} transcription error: {error}]",
-                )
-                try:
-                    error_segment.validate()
-                    all_segments.append(error_segment)
-                except ValueError:
-                    pass
-            # Leave the chunk JSON on disk (if it exists) so the next run can
-            # attempt to reuse it rather than re-running whisper.
 
-    # Remove JSON files only for chunks that completed successfully.
-    # Failed chunks keep their JSON so the next run can resume from them.
+            chunk_t0 = time.monotonic()
+
+            try:
+                if whisper_json.exists():
+                    print("         Resuming: reusing cached whisper output...", flush=True)
+                else:
+                    print("         [1/3] Extracting audio...", flush=True)
+                    prepare_audio(
+                        config=config,
+                        wav_path=wav_path,
+                        out_dir=chunk_dir,
+                        clip_start=clip_start + relative_start,
+                        clip_duration=duration,
+                        output_path=prepared_wav,
+                    )
+                    print(
+                        "         [2/3] Transcribing with whisper.cpp..."
+                        "  (may take several minutes)",
+                        flush=True,
+                    )
+                    run_whisper_cpp(config, prepared_wav, chunk_dir, whisper_stem)
+                    try:
+                        prepared_wav.unlink()
+                    except FileNotFoundError:
+                        pass
+
+                print("         [3/3] Loading transcript segments...", flush=True)
+                chunk_segments = load_whisper_segments(whisper_json, max_chars=max_chars)
+                all_segments.extend(offset_segments(chunk_segments, relative_start))
+                completed.add(index)
+
+                chunk_elapsed = time.monotonic() - chunk_t0
+                job_elapsed = time.monotonic() - job_t0
+                n_done = len(completed)
+                if n_done < total_chunks:
+                    avg = job_elapsed / n_done
+                    eta = avg * (total_chunks - n_done)
+                    print(
+                        f"         Done in {_fmt_duration(chunk_elapsed)}"
+                        f"  |  ETA: ~{_fmt_duration(eta)} for {total_chunks - n_done} more chunk(s)",
+                        flush=True,
+                    )
+                else:
+                    print(f"         Done in {_fmt_duration(chunk_elapsed)}", flush=True)
+
+            except Exception as error:
+                chunk_elapsed = time.monotonic() - chunk_t0
+                warn(f"chunk {index} failed: {error}")
+                print(
+                    f"         ERROR after {_fmt_duration(chunk_elapsed)}: {error}",
+                    flush=True,
+                )
+                error_end = min(relative_start + duration, relative_start + 5.0)
+                if error_end > relative_start:
+                    error_segment = Segment(
+                        start=relative_start,
+                        end=error_end,
+                        speaker="speaker_1",
+                        text=f"[Chunk {index} transcription error: {error}]",
+                    )
+                    try:
+                        error_segment.validate()
+                        all_segments.append(error_segment)
+                    except ValueError:
+                        pass
+                # Leave chunk JSON on disk for next-run resume.
+
+    # Remove JSON files only for successfully completed chunks.
     for index in completed:
         try:
             (chunk_dir / f"whisper_{index:04d}.json").unlink()
