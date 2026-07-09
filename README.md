@@ -2,7 +2,7 @@
 
 Create a transcript track inside a REAPER project from one or more selected WAV media items, using only local/offline tools.
 
-The repo also includes a second offline automation for syncing phone/camera video files to the selected mixer-recorded WAV item.
+The repo also includes a second offline automation for syncing phone/camera video files to the selected reference audio track (one or more WAV items joined end-to-end).
 
 The workflow is intentionally simple and reliable:
 
@@ -56,6 +56,7 @@ reaper-offline-transcript/
 │   └── sync_videos_to_audio.lua
 ├── worker/
 │   ├── offline_transcribe.py
+│   ├── background_launcher.py
 │   └── sync_videos.py
 ├── tests/
 │   └── test_offline_transcribe.py

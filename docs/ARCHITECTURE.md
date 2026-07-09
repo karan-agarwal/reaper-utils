@@ -6,20 +6,15 @@ The tool is split into two processes:
 
 1. **REAPER ReaScripts**
    - `create_transcript_track.lua` validates the selected media item(s), calls the offline Python worker, reads the generated TSV transcript, and creates a fresh `Transcript` track below the source track.
-   - `create_transcript_track_background.lua` writes a run manifest, launches the worker(s) in the background, and returns immediately so REAPER stays responsive.
+   - `create_transcript_track_background.lua` writes a run manifest, launches `background_launcher.py` synchronously (exits in < 1 s), and returns immediately so REAPER stays responsive. The actual transcription runs fully detached.
    - `import_transcript_track.lua` reads the latest run manifest and completed TSV outputs, then creates the `Transcript` track from those finished results.
-   - The blocking script is still useful when you want live progress output in a console window.
+   - `sync_videos_to_audio.lua` collects all WAV items from a selected reference track, accepts video files via a file picker, and calls `sync_videos.py` to align each video's audio against the concatenated reference.
+   - The blocking transcript script is still useful when you want live progress output in a console window.
 
-2. **Python worker (`offline_transcribe.py`)**
-   - Loads configuration.
-   - Prints a progress header and per-chunk status to the console window.
-   - Uses local FFmpeg to extract bounded chunks of the selected item region as 16 kHz mono WAV.
-   - Executes `whisper.cpp` locally one chunk at a time.
-   - On chunk failure, inserts an error-marker segment and continues with remaining chunks.
-   - On re-run, detects existing `whisper_NNNN.json` files and reuses them (resume).
-   - Normalizes Whisper JSON into transcript segments.
-   - Applies stable emoji speaker labels.
-   - Writes both JSON and TSV transcript files.
+2. **Python workers**
+   - `offline_transcribe.py` — transcription worker; extracts bounded WAV chunks, runs whisper.cpp, writes TSV/JSON.
+   - `background_launcher.py` — thin launcher that starts `offline_transcribe.py` as a detached Windows process (`DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`) so no pipe handles are inherited back to REAPER. Exits in under a second.
+   - `sync_videos.py` — video sync worker; extracts low-rate mono audio from each reference segment and video file, builds energy/onset features, runs Pearson-style correlation, writes TSV/JSON results.
 
 ## Why TSV for ReaScript consumption?
 
@@ -53,7 +48,7 @@ import_transcript_track.lua
 Transcript track created later from finished results
 ```
 
-## Progress window
+## Progress window (blocking script)
 
 `reaper.ExecProcess` blocks REAPER's UI thread until the child process exits. To give the user visibility without requiring a separate background process, the Lua script:
 
@@ -62,7 +57,7 @@ Transcript track created later from finished results
 
 This opens a **separate titled console window** the user can watch. The outer `cmd.exe` blocks until the window closes, and its exit code propagates back via `start /wait`. On failure the batch file runs `pause` so the user can read the error before the window closes.
 
-The Python worker prints a structured progress display to that window:
+The Python worker prints a structured progress display to the console window:
 
 ```text
 ==============================================================
@@ -79,9 +74,46 @@ The Python worker prints a structured progress display to that window:
          Done in 1m 24s  |  ETA: ~5m 36s for 4 more chunk(s)
 ```
 
-The non-blocking launcher instead starts the worker in the background and writes stdout/stderr to `worker.log` in each item folder.
+The background launcher writes worker output to `worker.log` in each item folder instead.
 
-## Timeline alignment
+## Background launcher (non-blocking script)
+
+The background launcher avoids the "stdout pipe stays open" problem that would block REAPER's `ExecProcess` even with `start /B`. Instead:
+
+1. `create_transcript_track_background.lua` calls `background_launcher.py` via `ExecProcess(command, 0)`. The launcher exits in under a second.
+2. `background_launcher.py` uses Python's `subprocess.Popen` with `creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`. This creates the transcription worker with a completely new console — no file handles are inherited back to REAPER.
+3. Worker stdout/stderr is redirected to `worker.log` in each item folder.
+4. `ExecProcess` returns as soon as the launcher exits, and REAPER's UI stays responsive.
+
+## Video sync architecture
+
+### Reference track and segments
+
+`sync_videos_to_audio.lua` selects a whole track instead of a single item. It collects all WAV items in position order, validates them (WAV source, playrate 1.0, not muted, contiguous within 10 ms), and writes a reference segments TSV:
+
+```
+source_path<TAB>clip_start<TAB>clip_duration
+C:\Audio\part1.wav<TAB>0.000000<TAB>1800.000000
+C:\Audio\part2.wav<TAB>0.000000<TAB>900.000000
+```
+
+`sync_videos.py` reads this file as `ReferenceSegment` dataclass instances, extracts each clip to a temp WAV at the configured sample rate, then concatenates them into `reference.wav` using Python's stdlib `wave` module (no FFmpeg concat, no path-escaping risk). This produces a single reference audio file spanning the full track timeline.
+
+### Timing math
+
+The correlation offset returned by `estimate_sync_offset` is measured from the start of the concatenated reference audio. Adding it to the first item's project position gives the correct project insert position:
+
+```
+insert_position = first_item.D_POSITION + offset_seconds
+```
+
+This is only valid when items are exactly contiguous. The Lua contiguity check enforces this before the worker runs.
+
+### Video file picker
+
+When [js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174) is installed, `JS_Dialog_BrowseForOpenFiles` opens a native multi-file picker. The null-byte-separated result is parsed with an `is_absolute_path` guard that handles both Windows format (`dir\0file1\0file2`) and macOS/Linux SWELL format (full paths per entry). Without js_ReaScriptAPI the script falls back to the original text prompt with `@manifest.txt` support.
+
+## Transcript timeline alignment
 
 Whisper timestamps are relative to each prepared chunk. The worker offsets each chunk result back into selected-item time, and the ReaScript adds the source item's project start position to each segment start/end.
 

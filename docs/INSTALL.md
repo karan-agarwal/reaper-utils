@@ -52,6 +52,9 @@ Edit `config.json`. Use **absolute Windows paths** with escaped backslashes:
 4. Select `reaper/create_transcript_track.lua`.
 5. Optionally bind it to a toolbar button or shortcut.
 6. Also load `reaper/create_transcript_track_background.lua` and `reaper/import_transcript_track.lua` if you want the non-blocking workflow.
+7. Load `reaper/sync_videos_to_audio.lua` for the video sync automation.
+
+For the best video-sync experience, install the **[js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174)** REAPER extension. It enables a native multi-file picker dialog so you can select all video files at once. Without it the script falls back to a text prompt.
 
 ## 4. Run
 
@@ -87,13 +90,21 @@ To force a full re-transcription, delete the `chunks/` subdirectory inside the r
 
 ## Background workflow
 
-The background launcher writes each run into `reaper-offline-transcript\runs\run_YYYYMMDD_HHMMSS\` and saves a `latest_run.txt` pointer for the importer. Each selected item gets its own `item_NNNN\` subfolder, just like the blocking workflow.
+The background launcher (`create_transcript_track_background.lua`) uses a small Python helper script (`worker/background_launcher.py`) to start the real transcription worker as a fully detached Windows process. The launcher exits in under a second, so REAPER's `ExecProcess` call returns immediately and the UI stays responsive.
+
+Under the hood:
+
+1. The Lua script writes a manifest TSV and a `run_meta.txt` (storing the project path) into a unique run directory under `reaper-offline-transcript\runs\run_YYYYMMDD_HHMMSS_NNNNNN\`.
+2. It calls `background_launcher.py` synchronously (fast — exits in < 1 s).
+3. `background_launcher.py` starts `offline_transcribe.py` with Windows `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` flags so no stdout/stderr handles are inherited back to REAPER. Worker output goes to `worker.log` in each item folder.
+4. REAPER unfreezes immediately; transcription continues in the background.
+5. A `latest_run.txt` pointer is written so the importer finds the right run directory.
 
 This means you can:
 
 1. Start transcription without freezing REAPER.
 2. Keep editing or monitoring the session.
-3. Come back later and run the importer to place the finished transcript items on the timeline.
+3. Come back later and run `import_transcript_track.lua` to place the finished transcript items on the timeline.
 
 ## Language and model selection
 
@@ -156,3 +167,15 @@ REAPER timeline items only show text that fits in the item rectangle. Increase t
 ### whisper.cpp produces garbled output for Hindi/Urdu
 
 Older whisper.cpp builds (v1.9.x) sometimes truncate multi-byte Unicode characters at JSON boundaries, producing invalid UTF-8. The worker handles this automatically with `errors="replace"` — affected characters appear as `\ufffd` in the transcript. Use a newer whisper.cpp build or a larger model to reduce frequency of this issue.
+
+### Video sync: "Reference track items are not contiguous"
+
+The video sync action requires all items on the reference track to be placed end-to-end with no gaps or overlaps (within 10 ms). Use REAPER's item snap/align tools to close any gaps, or select a different track where items are already joined.
+
+### Video sync: no file picker dialog appears
+
+Install the **[js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174)** REAPER extension for the native multi-file picker. Without it the script shows a text prompt where you can type paths separated by `|` or enter `@C:\path\manifest.txt`.
+
+### Background transcription is not appearing after import
+
+Check `worker.log` in the run's item folder (e.g. `reaper-offline-transcript\runs\run_...\item_0001\worker.log`) to see if the worker is still running or hit an error. Only run `import_transcript_track.lua` after all workers have finished — the importer verifies that every `transcript.tsv` file exists before inserting anything.
