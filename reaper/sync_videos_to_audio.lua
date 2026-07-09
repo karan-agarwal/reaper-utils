@@ -58,41 +58,89 @@ local function parse_json_string(content, key)
   return unescape_json_string(content:match(pattern))
 end
 
-local function selected_reference_item()
-  if reaper.CountSelectedMediaItems(0) ~= 1 then
-    return nil, "Select exactly one reference WAV media item before running this action."
+local function selected_reference_track()
+  if reaper.CountSelectedTracks(0) ~= 1 then
+    return nil, "Select exactly one track before running this action.\nAll WAV items on the track will be used as the reference audio."
   end
 
-  local item = reaper.GetSelectedMediaItem(0, 0)
-  local take = reaper.GetActiveTake(item)
-  if not take or reaper.TakeIsMIDI(take) then
-    return nil, "The selected item must contain an audio take."
+  local track = reaper.GetSelectedTrack(0, 0)
+  local item_count = reaper.CountTrackMediaItems(track)
+  if item_count == 0 then
+    return nil, "The selected track contains no media items."
   end
 
-  local source = reaper.GetMediaItemTake_Source(take)
-  local source_path = reaper.GetMediaSourceFileName(source, "")
-  if not source_path or source_path == "" then
-    return nil, "The selected item's source file could not be resolved."
+  local items = {}
+  for i = 0, item_count - 1 do
+    local item = reaper.GetTrackMediaItem(track, i)
+
+    if reaper.GetMediaItemInfo_Value(item, "B_MUTE") ~= 0 then
+      return nil, "Reference track must not contain muted items.\nUnmute all items or use a different track."
+    end
+
+    local take = reaper.GetActiveTake(item)
+    if not take or reaper.TakeIsMIDI(take) then
+      return nil, "All items on the reference track must contain audio takes."
+    end
+
+    local source = reaper.GetMediaItemTake_Source(take)
+    local source_path = reaper.GetMediaSourceFileName(source, "")
+    if not source_path or source_path == "" then
+      return nil, "An item's source file could not be resolved."
+    end
+
+    if not source_path:lower():match("%.wav$") then
+      return nil, "All reference items must use WAV source files.\nNon-WAV item: " .. source_path
+    end
+
+    local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
+    if math.abs(playrate - 1.0) > 0.0001 then
+      return nil, "All reference items must have take playrate 1.0."
+    end
+
+    table.insert(items, {
+      source_path = source_path,
+      position    = reaper.GetMediaItemInfo_Value(item, "D_POSITION"),
+      duration    = reaper.GetMediaItemInfo_Value(item, "D_LENGTH"),
+      start_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS"),
+    })
   end
 
-  if not source_path:lower():match("%.wav$") then
-    return nil, "The selected reference item must use a WAV source file."
-  end
+  -- Sort by project position (REAPER returns items in track order, but be safe).
+  table.sort(items, function(a, b) return a.position < b.position end)
 
-  local playrate = reaper.GetMediaItemTakeInfo_Value(take, "D_PLAYRATE")
-  if math.abs(playrate - 1.0) > 0.0001 then
-    return nil, "The selected item's take playrate must be 1.0 for sync alignment."
+  -- Validate contiguity: each item must start within 10ms of the previous item's end.
+  local contiguity_epsilon = 0.01
+  for i = 2, #items do
+    local expected = items[i - 1].position + items[i - 1].duration
+    if math.abs(items[i].position - expected) > contiguity_epsilon then
+      return nil, string.format(
+        "Reference track items are not contiguous.\nItem %d starts at %.3fs but item %d ends at %.3fs (gap/overlap of %.3fs).\nEnsure all items are joined end-to-end with no gaps.",
+        i, items[i].position, i - 1, expected, items[i].position - expected
+      )
+    end
   end
 
   return {
-    item = item,
-    take = take,
-    source_path = source_path,
-    position = reaper.GetMediaItemInfo_Value(item, "D_POSITION"),
-    duration = reaper.GetMediaItemInfo_Value(item, "D_LENGTH"),
-    start_offset = reaper.GetMediaItemTakeInfo_Value(take, "D_STARTOFFS"),
-    track = reaper.GetMediaItem_Track(item)
+    track    = track,
+    items    = items,
+    position = items[1].position,
   }
+end
+
+local function write_reference_segments(output_dir, source)
+  local sep = package.config:sub(1, 1)
+  local path = output_dir .. sep .. "reference_segments.tsv"
+  local file = io.open(path, "w")
+  if not file then
+    return nil, "Could not write reference segments file: " .. path
+  end
+  file:write("source_path\tclip_start\tclip_duration\n")
+  for _, seg in ipairs(source.items) do
+    file:write(string.format("%s\t%.6f\t%.6f\n",
+      seg.source_path, seg.start_offset, seg.duration))
+  end
+  file:close()
+  return path
 end
 
 local function ensure_config()
@@ -179,16 +227,14 @@ local function collect_videos_manifest(output_dir)
   return manifest_path
 end
 
-local function run_worker(config, source, videos_manifest, output_dir)
+local function run_worker(config, source, segments_file, videos_manifest, output_dir)
   local inner_command = table.concat({
     quote_arg(config.python),
     quote_arg(config.worker),
     "--config", quote_arg(CONFIG_PATH),
-    "--reference", quote_arg(source.source_path),
+    "--reference-segments-file", quote_arg(segments_file),
     "--videos-file", quote_arg(videos_manifest),
     "--out-dir", quote_arg(output_dir),
-    "--reference-start", string.format("%.6f", source.start_offset),
-    "--reference-duration", string.format("%.6f", source.duration),
     "--reference-project-position", string.format("%.6f", source.position)
   }, " ")
 
@@ -351,7 +397,7 @@ local function insert_video_item(track, result)
 end
 
 local function main()
-  local source, source_error = selected_reference_item()
+  local source, source_error = selected_reference_track()
   if not source then
     message("Sync Videos to Audio", source_error)
     return
@@ -364,13 +410,20 @@ local function main()
   end
 
   local output_dir = make_output_dir()
+
+  local segments_file, segments_error = write_reference_segments(output_dir, source)
+  if not segments_file then
+    message("Sync Videos to Audio", segments_error)
+    return
+  end
+
   local videos_manifest, manifest_error = collect_videos_manifest(output_dir)
   if not videos_manifest then
     message("Sync Videos to Audio", manifest_error)
     return
   end
 
-  local tsv_path, worker_error = run_worker(config, source, videos_manifest, output_dir)
+  local tsv_path, worker_error = run_worker(config, source, segments_file, videos_manifest, output_dir)
   if not tsv_path then
     message("Sync Videos to Audio", worker_error)
     return

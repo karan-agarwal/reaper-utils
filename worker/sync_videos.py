@@ -23,6 +23,15 @@ SUPPORTED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm"}
 
 
 @dataclass(frozen=True)
+class ReferenceSegment:
+    """One WAV item from the REAPER reference track."""
+
+    source_path: Path
+    clip_start: float   # D_STARTOFFS: offset into the source file (seconds)
+    clip_duration: float  # D_LENGTH: how long the item plays in the project (seconds)
+
+
+@dataclass(frozen=True)
 class SyncResult:
     video_path: Path
     status: str
@@ -67,6 +76,98 @@ def read_video_manifest(path: Path) -> list[Path]:
         raise ValueError(f"videos manifest is empty: {path}")
 
     return videos
+
+
+def read_reference_segments(path: Path) -> list[ReferenceSegment]:
+    """Read a tab-separated reference segments file written by the Lua action.
+
+    Format (one header line, then one row per REAPER track item):
+        source_path<TAB>clip_start<TAB>clip_duration
+
+    Paths are written raw (no escaping needed — Windows paths cannot contain tabs).
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"reference segments file not found: {path}")
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines:
+        raise ValueError(f"reference segments file is empty: {path}")
+
+    expected_header = ["source_path", "clip_start", "clip_duration"]
+    if lines[0].split("\t")[:3] != expected_header:
+        raise ValueError(
+            f"invalid reference segments header: expected {chr(9).join(expected_header)!r}, got {lines[0]!r}"
+        )
+
+    segments: list[ReferenceSegment] = []
+    for line in lines[1:]:  # skip header
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        if len(parts) < 3:
+            raise ValueError(
+                f"expected 3 tab-separated columns in reference segments file, got {len(parts)}: {line!r}"
+            )
+        try:
+            clip_start = float(parts[1])
+            clip_duration = float(parts[2])
+        except ValueError as exc:
+            raise ValueError(f"non-numeric timing in reference segments file: {line!r}") from exc
+        if clip_duration <= 0:
+            raise ValueError(f"clip_duration must be positive, got {clip_duration!r}")
+        segments.append(
+            ReferenceSegment(source_path=Path(parts[0]), clip_start=clip_start, clip_duration=clip_duration)
+        )
+
+    if not segments:
+        raise ValueError(f"reference segments file has no data rows: {path}")
+
+    return segments
+
+
+def concatenate_reference_audio(
+    config: dict[str, Any],
+    segments: list[ReferenceSegment],
+    output_path: Path,
+    sample_rate: int,
+) -> Path:
+    """Extract and join all reference segments into one mono s16 WAV.
+
+    Single-segment fast path delegates to extract_audio() directly.
+    Multi-segment path extracts each clip to a temp WAV then concatenates
+    using the stdlib wave module — no subprocess or path-escaping involved.
+    """
+    if len(segments) == 1:
+        seg = segments[0]
+        return extract_audio(config, seg.source_path, output_path, sample_rate, seg.clip_start, seg.clip_duration)
+
+    work_dir = output_path.parent
+    temp_wavs: list[Path] = []
+    try:
+        for index, seg in enumerate(segments):
+            temp_wav = work_dir / f"ref_seg_{index:04d}.wav"
+            temp_wavs.append(temp_wav)  # register before extraction so finally cleans it up on failure
+            extract_audio(config, seg.source_path, temp_wav, sample_rate, seg.clip_start, seg.clip_duration)
+
+        # All segments are mono s16 at the same sample_rate — frame copy is safe.
+        with wave.open(str(output_path), "wb") as out_wav:
+            out_wav.setnchannels(1)
+            out_wav.setsampwidth(2)
+            out_wav.setframerate(sample_rate)
+            for temp_wav in temp_wavs:
+                with wave.open(str(temp_wav), "rb") as in_wav:
+                    out_wav.writeframes(in_wav.readframes(in_wav.getnframes()))
+    finally:
+        for temp_wav in temp_wavs:
+            try:
+                temp_wav.unlink()
+            except FileNotFoundError:
+                pass
+
+    if not output_path.exists():
+        raise FileNotFoundError(f"failed to produce concatenated reference audio: {output_path}")
+
+    return output_path
 
 
 def validate_video_path(path: Path) -> None:
@@ -390,11 +491,9 @@ def estimate_sync_offset(
 
 def sync_videos(
     config: dict[str, Any],
-    reference_path: Path,
+    reference_segments: list[ReferenceSegment],
     videos: list[Path],
     out_dir: Path,
-    reference_start: float,
-    reference_duration: float,
     reference_project_position: float,
 ) -> list[SyncResult]:
     sample_rate = int(config.get("video_sync_sample_rate", 4000))
@@ -408,14 +507,7 @@ def sync_videos(
     work_dir = out_dir / "video-sync-audio"
     work_dir.mkdir(parents=True, exist_ok=True)
     reference_wav = work_dir / "reference.wav"
-    extract_audio(
-        config=config,
-        input_path=reference_path,
-        output_path=reference_wav,
-        sample_rate=sample_rate,
-        clip_start=reference_start,
-        clip_duration=reference_duration,
-    )
+    concatenate_reference_audio(config, reference_segments, reference_wav, sample_rate)
 
     results: list[SyncResult] = []
     manual_fail_index = 0
@@ -519,13 +611,11 @@ def write_outputs(out_dir: Path, results: list[SyncResult]) -> tuple[Path, Path]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Offline sync videos to a selected REAPER audio item.")
+    parser = argparse.ArgumentParser(description="Offline sync videos to a selected REAPER audio track.")
     parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("--reference", required=True, type=Path)
+    parser.add_argument("--reference-segments-file", required=True, type=Path)
     parser.add_argument("--videos-file", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
-    parser.add_argument("--reference-start", required=True, type=float)
-    parser.add_argument("--reference-duration", required=True, type=float)
     parser.add_argument("--reference-project-position", required=True, type=float)
     return parser.parse_args()
 
@@ -537,13 +627,12 @@ def main() -> int:
         config = load_config(args.config)
         args.out_dir.mkdir(parents=True, exist_ok=True)
         videos = read_video_manifest(args.videos_file)
+        segments = read_reference_segments(args.reference_segments_file)
         results = sync_videos(
             config=config,
-            reference_path=args.reference,
+            reference_segments=segments,
             videos=videos,
             out_dir=args.out_dir,
-            reference_start=args.reference_start,
-            reference_duration=args.reference_duration,
             reference_project_position=args.reference_project_position,
         )
         json_path, tsv_path = write_outputs(args.out_dir, results)
