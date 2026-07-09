@@ -1,12 +1,14 @@
 # Video sync automation
 
-`reaper/sync_videos_to_audio.lua` inserts phone/camera video files in sync with a selected reference WAV item.
+`reaper/sync_videos_to_audio.lua` inserts phone/camera video files in sync with a selected reference audio track.
 
 The workflow is fully offline:
 
-1. Select exactly one reference WAV item in REAPER.
+1. Select the reference audio track in REAPER (click the track header). All contiguous WAV items on the track are used as the reference — items must be joined end-to-end with no gaps.
 2. Run the `sync_videos_to_audio.lua` ReaScript action.
-3. Enter video paths separated by `|`, or enter `@C:\path\videos.txt` to use a manifest with one video path per line.
+3. **Pick video files:**
+   - **With [js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174) installed:** A multi-file picker dialog opens — select all video files at once using Ctrl+click or Shift+click.
+   - **Without js_ReaScriptAPI:** A text prompt appears. Enter video paths separated by `|`, or enter `@C:\path\videos.txt` to use a manifest file with one video path per line. Leave blank and press OK to pick files one at a time.
 4. The Python worker extracts low-rate mono audio using local FFmpeg.
 5. It matches each video audio stream against the reference using energy/onset cross-correlation.
 6. REAPER creates two fresh tracks:
@@ -14,7 +16,17 @@ The workflow is fully offline:
    - `Manual Sync Videos`
 7. Every input video is inserted exactly once.
 
-Use the `@manifest.txt` form for many files or long paths. REAPER's text prompt has limited space and can truncate a long pipe-separated list.
+## Multi-directory or large batches (without js_ReaScriptAPI)
+
+Use the `@manifest.txt` form for many files or videos spread across multiple directories. REAPER's text prompt has limited space and can truncate a long pipe-separated list. Create a plain text file with one video path per line and enter `@C:\path\to\manifest.txt`.
+
+## Reference track requirements
+
+- All items on the track must be WAV files with take playrate 1.0.
+- Items must not be muted.
+- Items must be contiguous — each item must start within 10 ms of the previous item's end. A clear error is shown if gaps or overlaps are detected.
+
+## Track behavior
 
 ## Track behavior
 

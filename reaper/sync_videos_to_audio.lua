@@ -189,41 +189,113 @@ local function split_video_input(value)
   return videos
 end
 
-local function collect_videos_manifest(output_dir)
-  local ok, input = reaper.GetUserInputs(
-    "Sync Videos to Audio",
-    1,
-    "Video paths separated by | or @manifest.txt",
-    ""
-  )
-  if not ok then
-    return nil, "Video selection was cancelled."
-  end
-
-  input = trim(input)
-  if input == "" then
-    return nil, "No video files were provided."
-  end
-
-  if input:sub(1, 1) == "@" then
-    local manifest_path = strip_quotes(input:sub(2))
-    if not read_file(manifest_path) then
-      return nil, "Video manifest could not be read: " .. manifest_path
+local function split_null_separated(str)
+  local result = {}
+  local pos = 1
+  while pos <= #str do
+    local null_pos = string.find(str, "\0", pos, true)
+    if null_pos then
+      local seg = str:sub(pos, null_pos - 1)
+      if seg ~= "" then table.insert(result, seg) end
+      pos = null_pos + 1
+    else
+      local seg = str:sub(pos)
+      if seg ~= "" then table.insert(result, seg) end
+      break
     end
-    return manifest_path
   end
+  return result
+end
 
-  local videos = split_video_input(input)
-  if #videos == 0 then
-    return nil, "No video files were provided."
+local function is_absolute_path(path)
+  -- Windows: C:\... or C:/...   Unix/macOS: /...
+  return path:match("^%a:[\\/]") ~= nil or path:sub(1, 1) == "/"
+end
+
+local function parse_picker_result(file_names)
+  local parts = split_null_separated(file_names)
+  if #parts == 0 then return {} end
+  if #parts == 1 then return { parts[1] } end
+  -- On macOS/Linux (SWELL), each part is already an absolute full path.
+  -- On Windows (GetOpenFileName OFN_ALLOWMULTISELECT), parts[1] is the
+  -- directory and parts[2..] are bare filenames needing the prefix.
+  if is_absolute_path(parts[2]) then
+    return parts
+  end
+  local dir = parts[1]
+  local sep = package.config:sub(1, 1)
+  if dir:sub(-1) ~= sep then dir = dir .. sep end
+  local paths = {}
+  for i = 2, #parts do
+    table.insert(paths, dir .. parts[i])
+  end
+  return paths
+end
+
+local function collect_videos_manifest(output_dir)
+  local sep = package.config:sub(1, 1)
+  local manifest_path = output_dir .. sep .. "video_sync_inputs.txt"
+  local videos = {}
+
+  if reaper.APIExists("JS_Dialog_BrowseForOpenFiles") then
+    -- Multi-file picker via js_ReaScriptAPI (preferred).
+    local filter = "Video Files\0*.mp4;*.mov;*.mkv;*.avi;*.m4v;*.webm\0All Files\0*.*\0"
+    local ok, file_names = reaper.JS_Dialog_BrowseForOpenFiles(
+      "Select Video Files to Sync", "", "", filter, true)
+    if ok ~= 1 or not file_names or file_names == "" then
+      return nil, "Video selection was cancelled."
+    end
+    videos = parse_picker_result(file_names)
+    if #videos == 0 then
+      return nil, "No video files were selected."
+    end
+  else
+    -- Fallback: single-file picker loop (no js_ReaScriptAPI needed).
+    -- Also accepts @manifest.txt or pipe-separated paths for power users.
+    local ok, input = reaper.GetUserInputs(
+      "Sync Videos to Audio", 1,
+      "Video paths separated by |, @manifest.txt, or leave empty to pick one by one",
+      ""
+    )
+    if not ok then return nil, "Video selection was cancelled." end
+    input = trim(input)
+
+    if input:sub(1, 1) == "@" then
+      local mpath = strip_quotes(input:sub(2))
+      if not read_file(mpath) then
+        return nil, "Video manifest could not be read: " .. mpath
+      end
+      return mpath
+    end
+
+    if input ~= "" then
+      local vs = split_video_input(input)
+      if #vs == 0 then return nil, "No video files were provided." end
+      videos = vs
+    else
+      local last_path = ""
+      while true do
+        local title = #videos == 0
+          and "Select First Video (Cancel to abort)"
+          or string.format("Select Video %d (Cancel when done)", #videos + 1)
+        local pick_ok, path = reaper.GetUserFileNameForRead(last_path, title, "")
+        if not pick_ok then break end
+        path = trim(path)
+        if path ~= "" then
+          table.insert(videos, path)
+          last_path = path
+        end
+      end
+      if #videos == 0 then
+        return nil, "Video selection was cancelled."
+      end
+    end
   end
 
   local content = table.concat(videos, "\n") .. "\n"
-  local manifest_path = output_dir .. package.config:sub(1, 1) .. "video_sync_inputs.txt"
   if not write_file(manifest_path, content) then
     return nil, "Could not write video manifest: " .. manifest_path
   end
-
   return manifest_path
 end
 
