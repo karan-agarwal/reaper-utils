@@ -7,9 +7,7 @@ The repo also includes a second offline automation for syncing phone/camera vide
 The workflow is intentionally simple and reliable:
 
 - Select one or more WAV media items in REAPER.
-- Run a ReaScript action.
-- The script calls a local Python worker **for each selected item**.
-- A progress window opens per item so you can track status while REAPER is busy.
+- Run the blocking ReaScript action, or use the background launcher plus importer.
 - The worker runs `whisper.cpp` offline.
 - REAPER creates a fresh `Transcript` track below the source track.
 - Each transcript segment becomes an empty item with text notes.
@@ -36,6 +34,7 @@ Implemented:
 - **Progress window** — a titled console window opens per item showing chunk-by-chunk progress, elapsed time, and ETA while REAPER's UI is frozen.
 - **Error recovery** — if a chunk fails, an error-marker item is inserted in the transcript at the correct time and processing continues with the next chunk.
 - **Resume support** — re-running the action skips any chunks that were already successfully transcribed in a previous run.
+- **Background workflow** — `create_transcript_track_background.lua` launches transcription jobs without freezing REAPER, and `import_transcript_track.lua` builds the transcript track later from the completed results.
 - TSV output for robust ReaScript parsing.
 - JSON output for metadata and future tooling.
 
@@ -52,6 +51,8 @@ reaper-offline-transcript/
 ├── config.example.json
 ├── reaper/
 │   ├── create_transcript_track.lua
+│   ├── create_transcript_track_background.lua
+│   ├── import_transcript_track.lua
 │   └── sync_videos_to_audio.lua
 ├── worker/
 │   ├── offline_transcribe.py
@@ -81,7 +82,8 @@ No internet connection is required at runtime once tools and models are installe
 3. In REAPER, install `reaper/create_transcript_track.lua` as a ReaScript action.
 4. Select one or more WAV media items.
 5. Run the action.
-6. A progress window opens for each item — watch it for chunk-by-chunk status and ETA. REAPER's UI will be unresponsive until all items finish.
+6. If you use the blocking script, a progress window opens for each item and REAPER's UI will be unresponsive until all items finish.
+7. If you use the background launcher, REAPER stays responsive and you later run the importer to build the transcript track from the finished TSV files.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup.
 

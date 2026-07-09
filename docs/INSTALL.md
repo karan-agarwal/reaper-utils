@@ -44,20 +44,22 @@ Edit `config.json`. Use **absolute Windows paths** with escaped backslashes:
 
 > **Important:** Save `config.json` without a UTF-8 BOM. In PowerShell, use `Set-Content -Encoding utf8NoBOM` or edit with an editor that supports BOM-free UTF-8.
 
-## 3. Install the REAPER action
+## 3. Install the REAPER actions
 
 1. Open REAPER.
 2. Go to **Actions > Show action list**.
 3. Choose **ReaScript: New/load**.
 4. Select `reaper/create_transcript_track.lua`.
 5. Optionally bind it to a toolbar button or shortcut.
+6. Also load `reaper/create_transcript_track_background.lua` and `reaper/import_transcript_track.lua` if you want the non-blocking workflow.
 
 ## 4. Run
 
 1. Select one or more WAV media items in the project.
-2. Run the `create_transcript_track.lua` action.
-3. A titled console window opens for each item — watch it for chunk-by-chunk progress, elapsed time, and ETA. REAPER's UI will be unresponsive while the worker runs; this is expected.
-4. Once all items are processed the window(s) close automatically and a new `Transcript` track appears below the source track.
+2. Run `create_transcript_track.lua` for the blocking workflow, or run `create_transcript_track_background.lua` if you want REAPER to stay responsive.
+3. If you launched the background workflow, wait for the jobs to finish and then run `import_transcript_track.lua` to build the transcript track from the latest completed run.
+4. For the blocking workflow, a titled console window opens for each item — watch it for chunk-by-chunk progress, elapsed time, and ETA. REAPER's UI will be unresponsive while the worker runs; this is expected.
+5. Once the importer runs, a new `Transcript` track appears below the source track.
 
 The selected item can be trimmed; only the audible selected item region is sent to transcription. The current version requires the take playrate to be `1.0` so transcript timing stays exact.
 
@@ -82,6 +84,16 @@ If a chunk fails (for example, due to a `whisper.cpp` encoding error on non-ASCI
 On re-run, the worker detects any `whisper_NNNN.json` files left on disk from a previous run and skips those chunks automatically. Only new or previously failed chunks are re-transcribed. This means you can safely re-run the action after a partial failure without paying the cost of re-transcribing what already succeeded.
 
 To force a full re-transcription, delete the `chunks/` subdirectory inside the relevant `item_NNNN/` output folder.
+
+## Background workflow
+
+The background launcher writes each run into `reaper-offline-transcript\runs\run_YYYYMMDD_HHMMSS\` and saves a `latest_run.txt` pointer for the importer. Each selected item gets its own `item_NNNN\` subfolder, just like the blocking workflow.
+
+This means you can:
+
+1. Start transcription without freezing REAPER.
+2. Keep editing or monitoring the session.
+3. Come back later and run the importer to place the finished transcript items on the timeline.
 
 ## Language and model selection
 

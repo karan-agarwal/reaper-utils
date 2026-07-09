@@ -4,13 +4,11 @@
 
 The tool is split into two processes:
 
-1. **REAPER ReaScript (`create_transcript_track.lua`)**
-   - Validates the selected media items (one or more WAV items may be selected).
-   - For each selected item, finds the WAV file, start offset, duration, and timeline position.
-   - Writes a small per-item batch file and launches the offline Python worker in a **visible console window** using `cmd.exe /C start /wait`.
-   - Reads the generated TSV transcript for each item.
-   - After all items are processed, creates a single fresh `Transcript` track below the first source track.
-   - Adds timeline-aligned empty text items for every segment from every processed item.
+1. **REAPER ReaScripts**
+   - `create_transcript_track.lua` validates the selected media item(s), calls the offline Python worker, reads the generated TSV transcript, and creates a fresh `Transcript` track below the source track.
+   - `create_transcript_track_background.lua` writes a run manifest, launches the worker(s) in the background, and returns immediately so REAPER stays responsive.
+   - `import_transcript_track.lua` reads the latest run manifest and completed TSV outputs, then creates the `Transcript` track from those finished results.
+   - The blocking script is still useful when you want live progress output in a console window.
 
 2. **Python worker (`offline_transcribe.py`)**
    - Loads configuration.
@@ -34,17 +32,25 @@ Newlines and tabs in transcript text are escaped before writing TSV.
 ```text
 Selected WAV item(s)
   ↓
-create_transcript_track.lua  (one iteration per selected item)
-  ↓  writes run_transcribe.bat → opens visible console window
-offline_transcribe.py  (runs in console window; blocks REAPER via ExecProcess)
-  ↓  chunk loop: FFmpeg extract → whisper.cpp → load JSON
-per-chunk whisper JSON  (kept on disk on failure for resume; deleted on success)
+create_transcript_track.lua
+  ↓  visible console window, blocking
+offline_transcribe.py
   ↓
-normalized transcript JSON + TSV  (written to item_NNNN/ subdirectory)
+normalized transcript JSON + TSV
   ↓
-create_transcript_track.lua reads all TSVs
+Transcript track created immediately
+
+Selected WAV item(s)
   ↓
-fresh REAPER Transcript track with all items
+create_transcript_track_background.lua
+  ↓  writes manifest + launches background workers
+offline_transcribe.py
+  ↓
+completed item_NNNN/transcript.tsv files
+  ↓
+import_transcript_track.lua
+  ↓
+Transcript track created later from finished results
 ```
 
 ## Progress window
@@ -73,6 +79,8 @@ The Python worker prints a structured progress display to that window:
          Done in 1m 24s  |  ETA: ~5m 36s for 4 more chunk(s)
 ```
 
+The non-blocking launcher instead starts the worker in the background and writes stdout/stderr to `worker.log` in each item folder.
+
 ## Timeline alignment
 
 Whisper timestamps are relative to each prepared chunk. The worker offsets each chunk result back into selected-item time, and the ReaScript adds the source item's project start position to each segment start/end.
@@ -88,6 +96,8 @@ Final transcript item starts at:           95.500 seconds
 ## Multi-item support
 
 When multiple WAV items are selected, the Lua script loops over them in order. Each item gets its own `item_NNNN/` subdirectory in the output folder (e.g. `item_0001/`, `item_0002/`). The TSVs are read after all workers finish, and all segments are inserted into a single `Transcript` track in one undo block. Items from different source WAVs appear interleaved by project timeline position.
+
+The background launcher keeps the same `item_NNNN/` layout, but it places runs under `reaper-offline-transcript\runs\run_YYYYMMDD_HHMMSS\` and records the latest run in `latest_run.txt` so the importer knows which outputs to use.
 
 ## Speaker handling
 
