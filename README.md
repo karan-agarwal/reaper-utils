@@ -50,6 +50,7 @@ Planned:
 reaper-offline-transcript/
 ├── config.example.json
 ├── reaper/
+│   ├── config_setup.lua
 │   ├── outlaw_create_transcript_track.lua
 │   ├── outlaw_create_transcript_track_background.lua
 │   ├── outlaw_import_transcript_track.lua
@@ -83,7 +84,7 @@ No internet connection is required at runtime once tools and models are installe
 1. In REAPER, open **Extensions > ReaPack > Import repositories**.
 2. Add `https://github.com/karan-agarwal/reaper-utils/raw/main/index.xml`.
 3. Open **Extensions > ReaPack > Browse packages** and install the **outlaw_create_transcript_track.lua** package. It includes all four actions and their local Python workers.
-4. Copy `config.example.json` from REAPER's `Scripts` folder to `config.json` in that same folder, then set the paths for Python, FFmpeg, `whisper.cpp`, and the local model. The packaged workers are found automatically.
+4. Run an `outlaw` action. If `config.json` is missing, it offers to copy an existing config or create one by asking for Python, FFmpeg, `whisper.cpp`, and the local model.
 5. In REAPER's Action List, search for "transcript" or "sync videos" and run the installed action.
 
 ### Install manually

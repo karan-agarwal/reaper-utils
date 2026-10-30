@@ -7,6 +7,7 @@
 local SCRIPT_DIR = ({reaper.get_action_context()})[2]:match("^(.*[\\/])")
 local REPO_DIR = SCRIPT_DIR:match("^(.*[\\/])[^\\/]+[\\/]$") or SCRIPT_DIR
 local CONFIG_PATH = REPO_DIR .. "config.json"
+local config_setup = dofile(SCRIPT_DIR .. "config_setup.lua")
 
 local function message(title, text)
   reaper.ShowMessageBox(text, title, 0)
@@ -145,6 +146,11 @@ local function write_reference_segments(output_dir, source)
 end
 
 local function ensure_config()
+  local config_path, setup_error = config_setup.ensure(CONFIG_PATH, REPO_DIR .. "config.example.json")
+  if not config_path then
+    return nil, setup_error
+  end
+
   local config = read_file(CONFIG_PATH)
   if not config then
     return nil, "Config file not found: " .. CONFIG_PATH
@@ -470,15 +476,15 @@ local function insert_video_item(track, result)
 end
 
 local function main()
-  local source, source_error = selected_reference_track()
-  if not source then
-    message("Sync Videos to Audio", source_error)
-    return
-  end
-
   local config, config_error = ensure_config()
   if not config then
     message("Sync Videos to Audio", config_error)
+    return
+  end
+
+  local source, source_error = selected_reference_track()
+  if not source then
+    message("Sync Videos to Audio", source_error)
     return
   end
 

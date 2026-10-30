@@ -4,7 +4,7 @@
 -- Python worker configured in config.json for each selected item, then creates
 -- empty transcript items on a single fresh track below the first source track.
 -- @description outlaw: Create transcript items from selected WAV media
--- @version 1.0.1
+-- @version 1.0.2
 -- @author Karan Agarwal
 -- @about Offline transcript and video-sync actions for REAPER.
 -- @metapackage
@@ -14,6 +14,7 @@
 --   [main] outlaw_import_transcript_track.lua
 --   [main] outlaw_sync_videos_to_audio.lua
 --   [nomain] ../config.example.json
+--   [nomain] config_setup.lua
 --   [nomain] ../worker/*.py
 
 local SCRIPT_DIR = ({reaper.get_action_context()})[2]:match("^(.*[\\/])")
@@ -109,7 +110,14 @@ local function selected_wav_items()
   return items
 end
 
+local config_setup = dofile(SCRIPT_DIR .. "config_setup.lua")
+
 local function ensure_config()
+  local config_path, setup_error = config_setup.ensure(CONFIG_PATH, REPO_DIR .. "config.example.json")
+  if not config_path then
+    return nil, setup_error
+  end
+
   local config = read_file(CONFIG_PATH)
   if not config then
     return nil, "Config file not found: " .. CONFIG_PATH
@@ -284,15 +292,15 @@ local function create_text_item(track, position, length, text)
 end
 
 local function main()
-  local sources, source_error = selected_wav_items()
-  if not sources then
-    message("Create Transcript Track", source_error)
-    return
-  end
-
   local config, config_error = ensure_config()
   if not config then
     message("Create Transcript Track", config_error)
+    return
+  end
+
+  local sources, source_error = selected_wav_items()
+  if not sources then
+    message("Create Transcript Track", source_error)
     return
   end
 

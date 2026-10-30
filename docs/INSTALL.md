@@ -13,7 +13,7 @@ At runtime the tool does not need internet access.
 
 ## 2. Configure paths
 
-The workers are found automatically relative to the installed Lua actions. After installing the actions (see below), copy the example config beside them: from the repository root for a manual clone, or from REAPER's resource `Scripts` folder for ReaPack.
+The workers are found automatically relative to the installed Lua actions. On first run, an action can create `config.json` for you. To configure it manually, copy the example config beside the actions: from the repository root for a manual clone, or from REAPER's resource `Scripts` folder for ReaPack.
 
 ```powershell
 # Run from the repository root for a manual clone.
@@ -52,7 +52,7 @@ Edit `config.json`. Use absolute Windows paths with escaped backslashes for loca
 1. Open **Extensions > ReaPack > Import repositories** and add:
    `https://github.com/karan-agarwal/reaper-utils/raw/main/index.xml`
 2. In **Browse packages**, install **outlaw_create_transcript_track.lua**. The package installs all four `outlaw_` actions, Python workers, and `config.example.json`.
-3. In REAPER's resource `Scripts` folder, copy `config.example.json` to `config.json` and configure the local executable/model paths as described above. Do not overwrite an existing `config.json`.
+3. Run any `outlaw` action. If `config.json` is missing, choose an existing config to copy or create one by selecting Python, FFmpeg, the `whisper.cpp` executable, and your local model. The config is saved in REAPER's resource `Scripts` folder for future runs.
 
 ### Manual
 
