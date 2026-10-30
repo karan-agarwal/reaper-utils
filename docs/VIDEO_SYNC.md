@@ -1,11 +1,11 @@
 # Video sync automation
 
-`reaper/sync_videos_to_audio.lua` inserts phone/camera video files in sync with a selected reference audio track.
+`reaper/outlaw_sync_videos_to_audio.lua` inserts phone/camera video files in sync with a selected reference audio track.
 
 The workflow is fully offline:
 
 1. Select the reference audio track in REAPER (click the track header). All contiguous WAV items on the track are used as the reference — items must be joined end-to-end with no gaps.
-2. Run the `sync_videos_to_audio.lua` ReaScript action.
+2. Run the `outlaw_sync_videos_to_audio.lua` ReaScript action.
 3. **Pick video files:**
    - **With [js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174) installed:** A multi-file picker dialog opens — select all video files at once using Ctrl+click or Shift+click.
    - **Without js_ReaScriptAPI:** A text prompt appears. Enter video paths separated by `|`, or enter `@C:\path\videos.txt` to use a manifest file with one video path per line. Leave blank and press OK to pick files one at a time.

@@ -5,10 +5,10 @@
 The tool is split into two processes:
 
 1. **REAPER ReaScripts**
-   - `create_transcript_track.lua` validates the selected media item(s), calls the offline Python worker, reads the generated TSV transcript, and creates a fresh `Transcript` track below the source track.
-   - `create_transcript_track_background.lua` writes a run manifest, launches `background_launcher.py` synchronously (exits in < 1 s), and returns immediately so REAPER stays responsive. The actual transcription runs fully detached.
-   - `import_transcript_track.lua` reads the latest run manifest and completed TSV outputs, then creates the `Transcript` track from those finished results.
-   - `sync_videos_to_audio.lua` collects all WAV items from a selected reference track, accepts video files via a file picker, and calls `sync_videos.py` to align each video's audio against the concatenated reference.
+   - `outlaw_create_transcript_track.lua` validates the selected media item(s), calls the offline Python worker, reads the generated TSV transcript, and creates a fresh `Transcript` track below the source track.
+   - `outlaw_create_transcript_track_background.lua` writes a run manifest, launches `background_launcher.py` synchronously (exits in < 1 s), and returns immediately so REAPER stays responsive. The actual transcription runs fully detached.
+   - `outlaw_import_transcript_track.lua` reads the latest run manifest and completed TSV outputs, then creates the `Transcript` track from those finished results.
+   - `outlaw_sync_videos_to_audio.lua` collects all WAV items from a selected reference track, accepts video files via a file picker, and calls `sync_videos.py` to align each video's audio against the concatenated reference.
    - The blocking transcript script is still useful when you want live progress output in a console window.
 
 2. **Python workers**
@@ -27,7 +27,7 @@ Newlines and tabs in transcript text are escaped before writing TSV.
 ```text
 Selected WAV item(s)
   ↓
-create_transcript_track.lua
+outlaw_create_transcript_track.lua
   ↓  visible console window, blocking
 offline_transcribe.py
   ↓
@@ -37,13 +37,13 @@ Transcript track created immediately
 
 Selected WAV item(s)
   ↓
-create_transcript_track_background.lua
+outlaw_create_transcript_track_background.lua
   ↓  writes manifest + launches background workers
 offline_transcribe.py
   ↓
 completed item_NNNN/transcript.tsv files
   ↓
-import_transcript_track.lua
+outlaw_import_transcript_track.lua
   ↓
 Transcript track created later from finished results
 ```
@@ -80,7 +80,7 @@ The background launcher writes worker output to `worker.log` in each item folder
 
 The background launcher avoids the "stdout pipe stays open" problem that would block REAPER's `ExecProcess` even with `start /B`. Instead:
 
-1. `create_transcript_track_background.lua` calls `background_launcher.py` via `ExecProcess(command, 0)`. The launcher exits in under a second.
+1. `outlaw_create_transcript_track_background.lua` calls `background_launcher.py` via `ExecProcess(command, 0)`. The launcher exits in under a second.
 2. `background_launcher.py` uses Python's `subprocess.Popen` with `creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`. This creates the transcription worker with a completely new console — no file handles are inherited back to REAPER.
 3. Worker stdout/stderr is redirected to `worker.log` in each item folder.
 4. `ExecProcess` returns as soon as the launcher exits, and REAPER's UI stays responsive.
@@ -89,7 +89,7 @@ The background launcher avoids the "stdout pipe stays open" problem that would b
 
 ### Reference track and segments
 
-`sync_videos_to_audio.lua` selects a whole track instead of a single item. It collects all WAV items in position order, validates them (WAV source, playrate 1.0, not muted, contiguous within 10 ms), and writes a reference segments TSV:
+`outlaw_sync_videos_to_audio.lua` selects a whole track instead of a single item. It collects all WAV items in position order, validates them (WAV source, playrate 1.0, not muted, contiguous within 10 ms), and writes a reference segments TSV:
 
 ```
 source_path<TAB>clip_start<TAB>clip_duration

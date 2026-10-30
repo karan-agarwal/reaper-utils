@@ -19,13 +19,13 @@ python -m unittest discover -s tests -v
 
 The repo has two main automations:
 
-1. `reaper/create_transcript_track.lua` + `worker/offline_transcribe.py`
+1. `reaper/outlaw_create_transcript_track.lua` + `worker/offline_transcribe.py`
    - Input: exactly one selected WAV media item in REAPER.
    - Worker: extracts bounded 16 kHz mono chunks with FFmpeg and runs local `whisper.cpp`.
    - Output: `transcript.json` and `transcript.tsv`.
    - REAPER result: a fresh `Transcript` track with empty text items aligned to speech.
 
-2. `reaper/sync_videos_to_audio.lua` + `worker/sync_videos.py`
+2. `reaper/outlaw_sync_videos_to_audio.lua` + `worker/sync_videos.py`
    - Input: exactly one selected WAV reference item plus video paths or an `@manifest.txt`.
    - Worker: extracts low-rate mono audio with FFmpeg and aligns video audio to the reference using energy/onset correlation.
    - Output: `video_sync_results.json` and `video_sync_results.tsv`.
@@ -52,7 +52,7 @@ reaper.Undo_EndBlock("...", -1)
 ```
 
 - REAPER may run peak analysis after media insertion. Do not depend on peaks being ready.
-- For video insertion, do not assume the newest item is the last item on a track. Track items are position-ordered. Use GUID snapshots and/or selected-item checks as in `sync_videos_to_audio.lua`.
+- For video insertion, do not assume the newest item is the last item on a track. Track items are position-ordered. Use GUID snapshots and/or selected-item checks as in `outlaw_sync_videos_to_audio.lua`.
 
 ## Python worker conventions
 

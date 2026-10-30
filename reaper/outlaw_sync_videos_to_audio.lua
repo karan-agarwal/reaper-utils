@@ -2,6 +2,7 @@
 --
 -- Video paths are entered as a pipe-separated list, or as @C:\path\videos.txt
 -- where the manifest contains one video path per line.
+-- @description outlaw: Sync video files to reference audio
 
 local SCRIPT_DIR = ({reaper.get_action_context()})[2]:match("^(.*[\\/])")
 local REPO_DIR = SCRIPT_DIR:match("^(.*[\\/])[^\\/]+[\\/]$") or SCRIPT_DIR

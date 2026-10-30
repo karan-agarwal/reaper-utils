@@ -1,7 +1,7 @@
 {
   "python_executable": "python",
-  "worker_script": "C:\\Workplace\\reaper-offline-transcript\\worker\\offline_transcribe.py",
-  "video_sync_worker_script": "C:\\Workplace\\reaper-offline-transcript\\worker\\sync_videos.py",
+  "worker_script": "",
+  "video_sync_worker_script": "",
   "ffmpeg_binary": "C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe",
   "ffprobe_binary": "C:\\Tools\\ffmpeg\\bin\\ffprobe.exe",
   "whisper_binary": "C:\\Tools\\whisper.cpp\\whisper-cli.exe",

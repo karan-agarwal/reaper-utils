@@ -1,8 +1,9 @@
 -- Imports completed transcript TSV files from the latest background run.
 --
--- Use this after create_transcript_track_background.lua has finished. The
+-- Use this after outlaw_create_transcript_track_background.lua has finished. The
 -- script scans the latest run manifest, verifies that all transcript TSV files
 -- exist, and then creates the Transcript track from the finished results.
+-- @description outlaw: Import completed transcript results
 
 local SCRIPT_DIR = ({reaper.get_action_context()})[2]:match("^(.*[\\/])")
 local REPO_DIR = SCRIPT_DIR:match("^(.*[\\/])[^\\/]+[\\/]$") or SCRIPT_DIR

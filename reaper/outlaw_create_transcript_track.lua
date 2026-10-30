@@ -3,6 +3,18 @@
 -- Install this file as a REAPER ReaScript action. The script calls the local
 -- Python worker configured in config.json for each selected item, then creates
 -- empty transcript items on a single fresh track below the first source track.
+-- @description outlaw: Create transcript items from selected WAV media
+-- @version 1.0.1
+-- @author Karan Agarwal
+-- @about Offline transcript and video-sync actions for REAPER.
+-- @metapackage
+-- @provides
+--   [main] .
+--   [main] outlaw_create_transcript_track_background.lua
+--   [main] outlaw_import_transcript_track.lua
+--   [main] outlaw_sync_videos_to_audio.lua
+--   [nomain] ../config.example.json
+--   [nomain] ../worker/*.py
 
 local SCRIPT_DIR = ({reaper.get_action_context()})[2]:match("^(.*[\\/])")
 local REPO_DIR = SCRIPT_DIR:match("^(.*[\\/])[^\\/]+[\\/]$") or SCRIPT_DIR
@@ -106,7 +118,7 @@ local function ensure_config()
   local python = parse_json_string(config, "python_executable") or "python"
   local worker = parse_json_string(config, "worker_script")
   if not worker or worker == "" then
-    return nil, "config.json must define worker_script."
+    worker = SCRIPT_DIR .. "..\\worker\\offline_transcribe.py"
   end
 
   return {

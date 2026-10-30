@@ -1,8 +1,9 @@
 -- Launches transcript generation in the background so REAPER stays responsive.
 --
 -- This script writes a run manifest, starts one worker process per selected WAV
--- item, and returns immediately. Use import_transcript_track.lua later to build
+-- item, and returns immediately. Use outlaw_import_transcript_track.lua later to build
 -- the transcript track from completed TSV outputs.
+-- @description outlaw: Transcribe selected WAV media in the background
 
 local SCRIPT_DIR = ({reaper.get_action_context()})[2]:match("^(.*[\\/])")
 local REPO_DIR = SCRIPT_DIR:match("^(.*[\\/])[^\\/]+[\\/]$") or SCRIPT_DIR
@@ -95,7 +96,7 @@ local function ensure_config()
   local python = config:match('\"python_executable\"%s*:%s*\"([^\"]*)\"') or "python"
   local worker = config:match('\"worker_script\"%s*:%s*\"([^\"]*)\"')
   if not worker or worker == "" then
-    return nil, "config.json must define worker_script."
+    worker = SCRIPT_DIR .. "..\\worker\\offline_transcribe.py"
   end
 
   -- Derive the background launcher path from the worker script path.
@@ -268,7 +269,7 @@ local function main()
   end
 
   reaper.ShowConsoleMsg(string.format(
-    "Launched %d transcription job(s) in background.\nRun folder: %s\nWhen complete, run import_transcript_track.lua to build the transcript track.\n",
+    "Launched %d transcription job(s) in background.\nRun folder: %s\nWhen complete, run outlaw_import_transcript_track.lua to build the transcript track.\n",
     #sources,
     run_dir
   ))

@@ -34,7 +34,7 @@ Implemented:
 - **Progress window** — a titled console window opens per item showing chunk-by-chunk progress, elapsed time, and ETA while REAPER's UI is frozen.
 - **Error recovery** — if a chunk fails, an error-marker item is inserted in the transcript at the correct time and processing continues with the next chunk.
 - **Resume support** — re-running the action skips any chunks that were already successfully transcribed in a previous run.
-- **Background workflow** — `create_transcript_track_background.lua` launches transcription jobs without freezing REAPER, and `import_transcript_track.lua` builds the transcript track later from the completed results.
+- **Background workflow** — `outlaw_create_transcript_track_background.lua` launches transcription jobs without freezing REAPER, and `outlaw_import_transcript_track.lua` builds the transcript track later from the completed results.
 - TSV output for robust ReaScript parsing.
 - JSON output for metadata and future tooling.
 
@@ -50,10 +50,10 @@ Planned:
 reaper-offline-transcript/
 ├── config.example.json
 ├── reaper/
-│   ├── create_transcript_track.lua
-│   ├── create_transcript_track_background.lua
-│   ├── import_transcript_track.lua
-│   └── sync_videos_to_audio.lua
+│   ├── outlaw_create_transcript_track.lua
+│   ├── outlaw_create_transcript_track_background.lua
+│   ├── outlaw_import_transcript_track.lua
+│   └── outlaw_sync_videos_to_audio.lua
 ├── worker/
 │   ├── offline_transcribe.py
 │   ├── background_launcher.py
@@ -78,13 +78,22 @@ No internet connection is required at runtime once tools and models are installe
 
 ## Quick start
 
-1. Copy `config.example.json` to `config.json`.
-2. Edit `config.json` with your local Python path, worker path, FFmpeg path, `whisper.cpp` binary path, and model path.
-3. In REAPER, install `reaper/create_transcript_track.lua` as a ReaScript action.
-4. Select one or more WAV media items.
-5. Run the action.
-6. If you use the blocking script, a progress window opens for each item and REAPER's UI will be unresponsive until all items finish.
-7. If you use the background launcher, REAPER stays responsive and you later run the importer to build the transcript track from the finished TSV files.
+### Install with ReaPack
+
+1. In REAPER, open **Extensions > ReaPack > Import repositories**.
+2. Add `https://github.com/karan-agarwal/reaper-utils/raw/main/index.xml`.
+3. Open **Extensions > ReaPack > Browse packages** and install the **outlaw_create_transcript_track.lua** package. It includes all four actions and their local Python workers.
+4. Copy `config.example.json` from REAPER's `Scripts` folder to `config.json` in that same folder, then set the paths for Python, FFmpeg, `whisper.cpp`, and the local model. The packaged workers are found automatically.
+5. In REAPER's Action List, search for "transcript" or "sync videos" and run the installed action.
+
+### Install manually
+
+1. Copy `config.example.json` to `config.json` in the repository root.
+2. Edit `config.json` with paths to your local FFmpeg, `whisper.cpp` binary, and model. The workers are found relative to the Lua action files.
+3. In REAPER, install the `outlaw_*.lua` actions under `reaper/` as ReaScript actions.
+4. Select one or more WAV media items and run the action.
+5. If you use the blocking script, a progress window opens for each item and REAPER's UI will be unresponsive until all items finish.
+6. If you use the background launcher, REAPER stays responsive and you later run the importer to build the transcript track from the finished TSV files.
 
 See [docs/INSTALL.md](docs/INSTALL.md) for detailed setup.
 

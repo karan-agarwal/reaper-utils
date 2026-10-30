@@ -13,19 +13,20 @@ At runtime the tool does not need internet access.
 
 ## 2. Configure paths
 
-Copy the example config:
+The workers are found automatically relative to the installed Lua actions. After installing the actions (see below), copy the example config beside them: from the repository root for a manual clone, or from REAPER's resource `Scripts` folder for ReaPack.
 
 ```powershell
+# Run from the repository root for a manual clone.
 Copy-Item config.example.json config.json
 ```
 
-Edit `config.json`. Use **absolute Windows paths** with escaped backslashes:
+Edit `config.json`. Use absolute Windows paths with escaped backslashes for local tools; `python` can remain as-is if it is on `PATH`:
 
 ```json
 {
-  "python_executable": "C:\\Python314\\python.exe",
-  "worker_script": "C:\\workplace\\reaper-utils\\worker\\offline_transcribe.py",
-  "video_sync_worker_script": "C:\\workplace\\reaper-utils\\worker\\sync_videos.py",
+  "python_executable": "python",
+  "worker_script": "",
+  "video_sync_worker_script": "",
   "ffmpeg_binary": "C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe",
   "ffprobe_binary": "C:\\Tools\\ffmpeg\\bin\\ffprobe.exe",
   "whisper_binary": "C:\\Tools\\whisper.cpp\\Release\\whisper-cli.exe",
@@ -46,21 +47,30 @@ Edit `config.json`. Use **absolute Windows paths** with escaped backslashes:
 
 ## 3. Install the REAPER actions
 
+### ReaPack
+
+1. Open **Extensions > ReaPack > Import repositories** and add:
+   `https://github.com/karan-agarwal/reaper-utils/raw/main/index.xml`
+2. In **Browse packages**, install **outlaw_create_transcript_track.lua**. The package installs all four `outlaw_` actions, Python workers, and `config.example.json`.
+3. In REAPER's resource `Scripts` folder, copy `config.example.json` to `config.json` and configure the local executable/model paths as described above. Do not overwrite an existing `config.json`.
+
+### Manual
+
 1. Open REAPER.
 2. Go to **Actions > Show action list**.
 3. Choose **ReaScript: New/load**.
-4. Select `reaper/create_transcript_track.lua`.
+4. Select `reaper/outlaw_create_transcript_track.lua`.
 5. Optionally bind it to a toolbar button or shortcut.
-6. Also load `reaper/create_transcript_track_background.lua` and `reaper/import_transcript_track.lua` if you want the non-blocking workflow.
-7. Load `reaper/sync_videos_to_audio.lua` for the video sync automation.
+6. Also load `reaper/outlaw_create_transcript_track_background.lua` and `reaper/outlaw_import_transcript_track.lua` if you want the non-blocking workflow.
+7. Load `reaper/outlaw_sync_videos_to_audio.lua` for the video sync automation.
 
 For the best video-sync experience, install the **[js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174)** REAPER extension. It enables a native multi-file picker dialog so you can select all video files at once. Without it the script falls back to a text prompt.
 
 ## 4. Run
 
 1. Select one or more WAV media items in the project.
-2. Run `create_transcript_track.lua` for the blocking workflow, or run `create_transcript_track_background.lua` if you want REAPER to stay responsive.
-3. If you launched the background workflow, wait for the jobs to finish and then run `import_transcript_track.lua` to build the transcript track from the latest completed run.
+2. Run `outlaw_create_transcript_track.lua` for the blocking workflow, or run `outlaw_create_transcript_track_background.lua` if you want REAPER to stay responsive.
+3. If you launched the background workflow, wait for the jobs to finish and then run `outlaw_import_transcript_track.lua` to build the transcript track from the latest completed run.
 4. For the blocking workflow, a titled console window opens for each item — watch it for chunk-by-chunk progress, elapsed time, and ETA. REAPER's UI will be unresponsive while the worker runs; this is expected.
 5. Once the importer runs, a new `Transcript` track appears below the source track.
 
@@ -90,7 +100,7 @@ To force a full re-transcription, delete the `chunks/` subdirectory inside the r
 
 ## Background workflow
 
-The background launcher (`create_transcript_track_background.lua`) uses a small Python helper script (`worker/background_launcher.py`) to start the real transcription worker as a fully detached Windows process. The launcher exits in under a second, so REAPER's `ExecProcess` call returns immediately and the UI stays responsive.
+The background launcher (`outlaw_create_transcript_track_background.lua`) uses a small Python helper script (`worker/background_launcher.py`) to start the real transcription worker as a fully detached Windows process. The launcher exits in under a second, so REAPER's `ExecProcess` call returns immediately and the UI stays responsive.
 
 Under the hood:
 
@@ -104,7 +114,7 @@ This means you can:
 
 1. Start transcription without freezing REAPER.
 2. Keep editing or monitoring the session.
-3. Come back later and run `import_transcript_track.lua` to place the finished transcript items on the timeline.
+3. Come back later and run `outlaw_import_transcript_track.lua` to place the finished transcript items on the timeline.
 
 ## Language and model selection
 
@@ -178,4 +188,4 @@ Install the **[js_ReaScriptAPI](https://forum.cockos.com/showthread.php?t=212174
 
 ### Background transcription is not appearing after import
 
-Check `worker.log` in the run's item folder (e.g. `reaper-offline-transcript\runs\run_...\item_0001\worker.log`) to see if the worker is still running or hit an error. Only run `import_transcript_track.lua` after all workers have finished — the importer verifies that every `transcript.tsv` file exists before inserting anything.
+Check `worker.log` in the run's item folder (e.g. `reaper-offline-transcript\runs\run_...\item_0001\worker.log`) to see if the worker is still running or hit an error. Only run `outlaw_import_transcript_track.lua` after all workers have finished — the importer verifies that every `transcript.tsv` file exists before inserting anything.
